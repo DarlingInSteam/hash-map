@@ -3,4 +3,4 @@ project(untitled3)
 
 set(CMAKE_CXX_STANDARD 23)
 
-add_executable(untitled3 main.cpp second.cpp second.hpp)
+add_executable(untitled3 main.cpp second.cpp second.hpp third.cpp third.hpp)
