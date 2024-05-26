@@ -3,4 +3,10 @@ project(untitled3)
 
 set(CMAKE_CXX_STANDARD 23)
 
-add_executable(untitled3 main.cpp second.cpp second.hpp third.cpp third.hpp)
+add_executable(untitled3 main.cpp
+        DoubleHashingHashTable.h
+        Hash.h
+        LinearProbingHashTable.h
+        PrimeNumbers.h
+        BucketHashTable.h
+)

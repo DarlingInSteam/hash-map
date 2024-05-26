@@ -1,11 +1,12 @@
-#ifndef UNTITLED3_HASHER_H
-#define UNTITLED3_HASHER_H
+#ifndef UNTITLED3_HASH_H
+#define UNTITLED3_HASH_H
 
 #include <concepts>
 
-template<typename T, typename K>
-concept Hash = requires(T t, const K &k) {
-    { t(k) } -> std::convertible_to<std::size_t>;
+template<template<typename> typename H, typename K>
+concept Hash = requires(H<K> h, const K &k) {
+    { H<K>{} } -> std::convertible_to<H<K>>;
+    { h(k) } -> std::convertible_to<std::size_t>;
 };
 
-#endif //UNTITLED3_HASHER_H
+#endif //UNTITLED3_HASH_H

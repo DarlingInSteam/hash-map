@@ -1,216 +1,165 @@
 #include <iostream>
-#include <memory>
+#include "DoubleHashingHashTable.h"
+#include "LinearProbingHashTable.h"
+#include "BucketHashTable.h"
+#include <concepts>
+#include <cassert>
+#include <unordered_set>
+#include <vector>
+#include <ranges>
+#include <unordered_map>
+#include <chrono>
 
-class Hasher {
-public:
-    virtual int calculate(const std::string& key, int nodes_size) = 0;
-    virtual ~Hasher() = default;
-};
+template<std::integral T>
+consteval std::size_t bin_digits_amount(T number) {
+    assert(number >= 0);
 
-class SimpleHasher : public Hasher {
-public:
-    int calculate(const std::string& key, int nodes_size) override {
-        int hash = 0;
-        for (char c : key) {
-            hash += c;
-        }
-        return hash % nodes_size;
+    std::size_t amount = 0;
+    std::size_t temp = number;
+
+    do {
+        temp /= 2;
+        amount += 1;
+    } while (temp > 0);
+
+    return amount;
+}
+
+std::size_t gen_random() {
+    std::size_t result = 0;
+
+    for (std::size_t i = 0; i < sizeof(std::size_t) * 8 / bin_digits_amount(RAND_MAX) + 1; ++i) {
+        result |= rand() << (bin_digits_amount(RAND_MAX) * i);
+    }
+
+    return result;
+}
+
+template<std::size_t size>
+std::unordered_set<std::size_t> generate_rand_numbers(std::size_t min, std::size_t max) {
+    std::unordered_set<std::size_t> unique_numbers;
+    unique_numbers.reserve(size);
+
+    while (unique_numbers.size() < size) {
+        unique_numbers.insert(gen_random() % (max - min) + min);
+    }
+
+    return unique_numbers;
+}
+
+template<typename K>
+struct StdHasher {
+    std::size_t operator()(const K &key) {
+        return std::hash<K>{}(key);
     }
 };
 
-template <typename T>
-class HashTable {
-public:
-    HashTable(std::unique_ptr<Hasher>&& hasher) : hasher(std::move(hasher)), nodes(new Node*[default_size]), alive_size(0), nodes_size(default_size), alive_non_alive_size(0) {
-        for (int i = 0; i < nodes_size; i++) {
-            nodes[i] = nullptr;
-        }
-    };
+std::ostream &bold_on(std::ostream &os) {
+    return os << "\e[1m";
+}
 
-    ~HashTable() {
-        for (int i = 0; i < nodes_size; i++) {
-            if (nodes[i]) delete nodes[i];
+std::ostream &bold_off(std::ostream &os) {
+    return os << "\e[0m";
+}
+
+template<template<typename, typename, template<typename> typename, double> typename H, std::size_t min, double load_factor_limit, bool count_average_probes>
+void test(std::string_view title, const std::unordered_set<std::size_t> &random_numbers) {
+    H<std::size_t, std::size_t, StdHasher, load_factor_limit> hash_table;
+
+    std::size_t successful_probes_count = 0;
+    std::size_t failed_probes_count = 0;
+
+    std::size_t successful_count = 0;
+    std::size_t failed_count = 0;
+
+    std::chrono::duration<double, std::milli> successful_duration(0);
+    std::chrono::duration<double, std::milli> failed_duration(0);
+
+    for (auto number: random_numbers) {
+        if (hash_table.fullness() >= min && hash_table.load_factor() >= load_factor_limit) {
+            break;
         }
 
-        delete[] nodes;
+        hash_table.insert({number, number});
     }
 
-    bool add(std::string&& key, T&& value) {
-        if (alive_size + 1 > int(nodes_size * resize_factor)) resize();
-        else if (alive_non_alive_size > 2 * alive_size) rehash();
+    for (std::size_t i = 0; i < 1'000'000; ++i) {
+        std::size_t probes_count = 0;
 
-        int i = 0;
-        int hash = hasher->calculate(key, nodes_size);
-        int deletedHash = -1;
+        auto t1 = std::chrono::high_resolution_clock::now();
+        auto found_value = hash_table.find(i, probes_count);
+        auto t2 = std::chrono::high_resolution_clock::now();
 
-        while (i < nodes_size) {
-            hash = (hash + i) % nodes_size;
+        std::chrono::duration<double, std::milli> delta_t = t2 - t1;
 
-            if (nodes[hash] != nullptr && nodes[hash]->value == value && !nodes[hash]->isDeleted) {
-                return false;
-            }
-            if (nodes[hash] != nullptr && nodes[hash]->isDeleted && deletedHash == -1) {
-                deletedHash = hash;
-            }
-
-            ++i;
-        }
-
-        if (deletedHash != -1) {
-            nodes[deletedHash]->value = value;
-            nodes[deletedHash]->isDeleted = false;
-            nodes[deletedHash]->key = key;
-            alive_size++;
-            return true;
-        }
-        else {
-            nodes[hash] = new Node();
-            nodes[hash]->value = value;
-            nodes[hash]->key = key;
-            alive_size++;
-            alive_non_alive_size++;
-            return true;
+        if (found_value) {
+            successful_duration += delta_t;
+            successful_probes_count += probes_count;
+            ++successful_count;
+        } else {
+            failed_duration += delta_t;
+            failed_probes_count += probes_count;
+            ++failed_count;
         }
     }
 
-    bool remove(const std::string& key) {
-        int i = 0;
-        int hash = hasher->calculate(key, nodes_size);
+    double average_successful_probes =
+            static_cast<double>(successful_probes_count) / static_cast<double>(hash_table.fullness());
+    double average_failed_probes =
+            static_cast<double>(failed_probes_count) / static_cast<double>(1'000'000 - hash_table.fullness());
 
-        while (i < nodes_size) {
-            hash = (hash + i) % nodes_size;
+    std::cout << bold_on << "test: " << bold_off << title << "\n";
 
-            if (nodes[hash] != nullptr && !nodes[hash]->isDeleted && nodes[hash]->key == key) {
-                nodes[hash]->isDeleted = true;
-                alive_size--;
-                return true;
-            }
+    std::cout << bold_on << "load factor limit: " << bold_off << load_factor_limit << "\n";
+    std::cout << bold_on << "load factor: " << bold_off << hash_table.load_factor() << "\n";
+    std::cout << bold_on << "hash table fullness: " << bold_off << hash_table.fullness() << "\n\n";
 
-            ++i;
-        }
+    if constexpr (count_average_probes) {
+        std::cout << bold_on << "total probes count of successful searches: " << bold_off << successful_probes_count
+                  << "\n";
+        std::cout << bold_on << "average probes count of successful search: " << bold_off << average_successful_probes
+                  << "\n";
+        std::cout << bold_on << "average probes count of successful search evaluation: " << bold_off
+                  << hash_table.successful_probes_evaluation()
+                  << "\n\n";
 
-        return false;
+        std::cout << bold_on << "total probes count of failed searches: " << bold_off << failed_probes_count << "\n";
+        std::cout << bold_on << "average probes count of failed search: " << bold_off << average_failed_probes << "\n";
+        std::cout << bold_on << "average probes count of failed search evaluation: " << bold_off
+                  << hash_table.failed_probes_evaluation()
+                  << "\n\n";
     }
 
-    T* find(const std::string& key) {
-        int i = 0;
-        int hash = hasher->calculate(key, nodes_size);
+    std::cout << bold_on << "total time of successful searches: " << bold_off << successful_duration.count() << "ms"
+              << "\n";
+    std::cout << bold_on << "average time of successful search: " << bold_off
+              << successful_duration.count() / hash_table.fullness()
+              << "ms" << "\n\n";
 
-        while (i < nodes_size) {
-            hash = (hash + i) % nodes_size;
+    std::cout << bold_on << "total time of failed searches: " << bold_off << failed_duration.count() << "ms" << "\n";
+    std::cout << bold_on << "average time of failed search: " << bold_off
+              << failed_duration.count() / (1'000'000 - hash_table.fullness()) << "ms" << "\n\n";
+}
 
-            if (nodes[hash] != nullptr && !nodes[hash]->isDeleted && nodes[hash]->key == key) {
-                return &nodes[hash]->value;
-            }
-
-            ++i;
-        }
-
-        return nullptr;
-    }
-
-private:
-    static const int default_size = 8;
-    // u can change this value
-    constexpr static const double resize_factor = 0.75;
-
-    struct Node {
-        T value;
-        std::string key;
-        bool isDeleted;
-        Node() = default;
-        Node(T&& value, std::string&& key): value(value), key(key) {}
-    };
-
-    std::unique_ptr<Hasher> hasher;
-    Node** nodes;
-    int alive_size;
-    int nodes_size;
-    int alive_non_alive_size;
-
-    void rehash() {
-        alive_non_alive_size = 0;
-        alive_size = 0;
-
-        Node** buff = new Node*[nodes_size];
-
-        for (int i = 0; i < nodes_size; i++) {
-            buff[i] = nullptr;
-        }
-
-        std::swap(nodes, buff);
-
-        for (int i = 0; i < nodes_size; i++) {
-            if (buff[i] != nullptr && buff[i]->isDeleted == false) {
-                add(std::move(buff[i]->key), std::move(buff[i]->value));
-            }
-        }
-
-        for (int i = 0; i < nodes_size; i++) {
-            if (buff[i]) delete buff[i];
-        }
-
-        delete[] buff;
-    }
-
-    void resize() {
-        int prev_nodes_size = nodes_size;
-        nodes_size *= 2;
-        alive_non_alive_size = 0;
-        alive_size = 0;
-
-        Node** buff = new Node*[nodes_size];
-
-        for (int i = 0; i < nodes_size; i++) {
-            buff[i] = nullptr;
-        }
-
-        std::swap(nodes, buff);
-
-        for (int i = 0; i < prev_nodes_size; i++) {
-            if (buff[i] != nullptr && buff[i]->isDeleted == false) {
-                add(std::move(buff[i]->key), std::move(buff[i]->value));
-            }
-        }
-
-        for (int i = 0; i < prev_nodes_size; i++) {
-            if (buff[i]) delete buff[i];
-        }
-
-        delete[] buff;
-    }
-};
+template<template<typename, typename, template<typename> typename, double> typename H, std::size_t min, bool count_average_probes>
+void test_series(std::string_view title, std::unordered_set<std::size_t> random_numbers) {
+    test<H, min, 0.1, count_average_probes>(title, random_numbers);
+    test<H, min, 0.2, count_average_probes>(title, random_numbers);
+    test<H, min, 0.3, count_average_probes>(title, random_numbers);
+    test<H, min, 0.4, count_average_probes>(title, random_numbers);
+    test<H, min, 0.5, count_average_probes>(title, random_numbers);
+    test<H, min, 0.6, count_average_probes>(title, random_numbers);
+    test<H, min, 0.7, count_average_probes>(title, random_numbers);
+    test<H, min, 0.8, count_average_probes>(title, random_numbers);
+    test<H, min, 0.9, count_average_probes>(title, random_numbers);
+}
 
 int main() {
-    // Создаем хэш-таблицу с использованием простого хэшера
-    std::unique_ptr<Hasher> simple_hasher = std::make_unique<SimpleHasher>();
-    std::unique_ptr<HashTable<int>> hash_table = std::make_unique<HashTable<int>>(std::move(simple_hasher));
+    auto random_numbers = generate_rand_numbers<1'000'000>(0, 1'000'000);
 
-    // Тест на добавление элементов
-    std::cout << "Add Test:\n";
-    std::cout << "Adding key1: 10 - " << (hash_table->add("key1", 10) ? "Success" : "Failed") << std::endl;
-    std::cout << "Adding key2: 20 - " << (hash_table->add("key2", 20) ? "Success" : "Failed") << std::endl;
-    std::cout << "Adding key1: 30 - " << (hash_table->add("key1", 30) ? "Success" : "Failed") << std::endl; // Попытка добавить элемент с уже существующим ключом
-
-    // Тест на удаление элементов
-    std::cout << "\nRemove Test:\n";
-    std::cout << "Removing key1 - " << (hash_table->remove("key1") ? "Success" : "Failed") << std::endl;
-    std::cout << "Removing key3 - " << (hash_table->remove("key3") ? "Success" : "Failed") << std::endl; // Попытка удалить несуществующий элемент
-
-    // Тест на поиск элементов
-    std::cout << "\nFind Test:\n";
-    int* found_value = hash_table->find("key2");
-    if (found_value != nullptr) {
-        std::cout << "Found key2: " << *found_value << std::endl;
-    } else {
-        std::cout << "Key2 not found." << std::endl;
-    }
-    found_value = hash_table->find("key3");
-    if (found_value != nullptr) {
-        std::cout << "Found key3: " << *found_value << std::endl;
-    } else {
-        std::cout << "Key3 not found." << std::endl;
-    } // Поиск несуществующего элемента
+    test_series<DoubleHashingHashTable, 50'000, true>("double hashing hash table", random_numbers);
+    test_series<LinearHashingHashTable, 50'000, true>("linear hashing hash table", random_numbers);
+    test_series<BucketHashTable, 50'000, false>("bucket hash table", random_numbers);
 
     return 0;
 }
