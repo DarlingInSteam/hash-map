@@ -1,58 +1,68 @@
-#ifndef UNTITLED3_OPENADDRESSINGHASHTABLE_H
-#define UNTITLED3_OPENADDRESSINGHASHTABLE_H
+#ifndef UNTITLED3_DOUBLEHASHINGHASHTABLE_H
+#define UNTITLED3_DOUBLEHASHINGHASHTABLE_H
 
 #include <cstddef>
 #include <memory>
 #include <optional>
+#include <cassert>
+#include <complex>
+#include "Hash.h"
+#include "PrimeNumbers.h"
 
+static constexpr double default_load_factor_limit = 0.8;
 
-template<typename K, typename V, Hasher<K> H>
-class OpenAddressingHashTable {
+template<typename K, typename V, template<typename> typename H, double load_factor_limit = default_load_factor_limit> requires Hash<H, K>
+class DoubleHashingHashTable {
 private:
     struct Node {
-        Node(K &&key, V &&value) : kv(key, value), isRemoved(false) {}
+        explicit Node(std::pair<const K, V> kv) : kv(kv), isRemoved(false) {}
 
-        std::pair<K, V> kv;
+        std::pair<const K, V> kv;
         bool isRemoved;
-    };
 
-    static constexpr std::size_t prime_numbers_count = 26;
-    static constexpr auto prime_numbers = std::array<std::size_t, prime_numbers_count>{
-            53, 97, 193, 389, 769, 1543, 3079, 6151, 12289, 24593, 49157, 98317, 196613, 393241, 786433, 1572869,
-            3145739, 6291469, 12582917, 25165843, 50331653, 100663319, 201326611, 402653189, 805306457, 1610612741
-    };
+        const K &key() {
+            return kv.first;
+        }
 
-    static constexpr double load_factor_limit = 0.5;
+        V &value() {
+            return kv.second;
+        }
+    };
 
 public:
-    explicit OpenAddressingHashTable(H &&hasher) : size_i(0),
-                                                   non_nullptr_size(0),
-                                                   non_removed_size(0),
-                                                   nodes(new Node *[prime_numbers[0]]),
-                                                   hasher(hasher) {
+    explicit DoubleHashingHashTable() : size_i(0),
+                                        non_nullptr_size(0),
+                                        non_removed_size(0),
+                                        nodes(new Node *[prime_numbers[0]]),
+                                        hash(H < K > {}) {
         std::fill(nodes, nodes + prime_numbers[0], nullptr);
     }
 
-    bool add(K &&key, V &&value) {
+    bool insert(std::pair<const K, V> &&kv) {
         if (load_factor() >= load_factor_limit) {
             rehash();
         }
 
-        return insert_without_rehash(key, value);
+        return insert_without_rehash(std::move(kv));
     }
 
-    std::optional<std::pair<const K &, V &>> find(const K &key) {
-        std::size_t h1 = hasher(key);
-        std::size_t h2 = 1 + h1 % (size() - 1);
-        std::size_t hash = h1 % size();
+    std::optional<std::reference_wrapper<std::pair<const K, V>>> find(const K &key, std::size_t &probes_count) {
+        std::size_t h1 = hash(key) % size();
+        std::size_t h2 = 1 + (h1 % (size() - 1));
 
-        for (std::size_t i = 0; i < size(); i++, hash = (h1 + i * h2) % size()) {
-            auto node = nodes[hash];
+        std::size_t h = h1;
 
-            if (node && !node->isRemoved && node->key == key) {
-                const K &k = node->kv->first;
-                V &v = node->kv->second;
-                return {{k, v}};
+        for (std::size_t i = 0; i < size(); ++i, h = (h1 + i * h2) % size(), ++probes_count) {
+            auto node = nodes[h];
+
+            if (!node) {
+                ++probes_count;
+                return {};
+            }
+
+            if (!node->isRemoved && node->key() == key) {
+                ++probes_count;
+                return {std::ref(node->kv)};
             }
         }
 
@@ -60,14 +70,15 @@ public:
     }
 
     std::optional<std::pair<K, V>> remove(const K &key) {
-        std::size_t h1 = hasher(key);
-        std::size_t h2 = 1 + h1 % (size() - 1);
-        std::size_t hash = h1 % size();
+        std::size_t h1 = hash(key) % size();
+        std::size_t h2 = 1 + (h1 % (size() - 1));
 
-        for (std::size_t i = 0; i < size(); i++, hash = (h1 + i * h2) % size()) {
-            auto node = nodes[hash];
+        std::size_t h = h1 % size();
 
-            if (node && !node->isRemoved && node->key == key) {
+        for (std::size_t i = 0; i < size(); i++, h = (h1 + i * h2) % size()) {
+            auto node = nodes[h];
+
+            if (node && !node->isRemoved && node->key() == key) {
                 node->isRemoved = true;
                 return {std::move(node->kv)};
             }
@@ -76,7 +87,48 @@ public:
         return {};
     }
 
-    ~OpenAddressingHashTable() {
+    void debug() {
+        std::cout << "double hashing hash table: [\n";
+
+        for (int i = 0; i < size(); i++) {
+            std::cout << "  slot = ";
+            if (!nodes[i]) {
+                std::cout << "nullptr,\n";
+            } else {
+                std::cout << "{\n";
+                std::cout << "      is_removed: " << (nodes[i]->isRemoved ? "true" : "false") << ",\n";
+                std::cout << "      key: " << nodes[i]->key() << ",\n";
+                std::cout << "      value: " << nodes[i]->value() << ",\n";
+                std::cout << "  },\n";
+            }
+        }
+
+        std::cout << "]" << std::endl;
+    }
+
+    double successful_probes_evaluation() {
+        auto alpha = static_cast<double>(fullness()) / static_cast<double>(size());
+        return (1. / alpha) * std::log(1. / (1 - alpha));
+    }
+
+    double failed_probes_evaluation() {
+        auto alpha = static_cast<double>(fullness()) / static_cast<double>(size());
+        return 1. / (1 - alpha);
+    }
+
+    std::size_t fullness() {
+        return non_removed_size;
+    }
+
+    inline std::size_t size() {
+        return prime_numbers[size_i];
+    }
+
+    inline double load_factor() {
+        return static_cast<double>(non_removed_size) / static_cast<double>(size());
+    }
+
+    ~DoubleHashingHashTable() {
         for (int i = 0; i < size(); i++) {
             delete nodes[i];
         }
@@ -86,17 +138,21 @@ public:
 
 private:
     void rehash() {
-        std::size_t new_size = next_size();
-        Node *buff = new Node *[new_size];
+        std::size_t old_size = size();
+        size_i++;
+        non_removed_size = 0;
+        non_nullptr_size = 0;
 
-        std::fill(buff, buff + new_size, nullptr);
+        Node **buff = new Node *[size()];
+
+        std::fill(buff, buff + size(), nullptr);
         std::swap(nodes, buff);
 
-        for (int i = 0; i < size(); i++) {
-            auto node = nodes[i];
+        for (int i = 0; i < old_size; i++) {
+            auto node = buff[i];
 
             if (node && !node->isRemoved) {
-                insert_without_rehash(std::move(node->key), std::move(node->value));
+                insert_without_rehash(std::move(node->kv));
             }
 
             delete node;
@@ -105,56 +161,42 @@ private:
         delete[] buff;
     }
 
-    bool insert_without_rehash(K &&key, V &&value) {
-        std::size_t h1 = hasher(key);
-        std::size_t h2 = 1 + h1 % (size() - 1);
-        std::size_t hash = h1 % size();
+    bool insert_without_rehash(std::pair<const K, V> &&kv) {
+        std::size_t h1 = hash(kv.first) % size();
+        std::size_t h2 = 1 + (h1 % (size() - 1));
 
-        bool new_pos_found = false;
-        std::size_t new_pos_hash = 0;
+        std::size_t h = h1 % size();
 
-        for (std::size_t i = 0; i < size(); i++, hash = (h1 + i * h2) % size()) {
-            auto node = nodes[hash];
+        for (std::size_t i = 0; i < size(); i++, h = (h1 + i * h2) % size()) {
+            auto node = nodes[h];
 
-            if (!node && node->key == key) {
+            if (node && !node->isRemoved && node->key() == kv.first) {
                 return false;
             }
 
-            if (!new_pos_found && (!node || node->isRemoved)) {
-                new_pos_found = true;
-                new_pos_hash = hash;
-                continue;
+            if (!node) {
+                nodes[h] = new Node(std::move(kv));
+
+                ++non_removed_size;
+                ++non_nullptr_size;
+                return true;
+            }
+
+            if (node->isRemoved) {
+                delete node;
+                nodes[h] = new Node(std::move(kv));
+
+                ++non_removed_size;
+                return true;
             }
         }
 
-        if (!new_pos_found) {
-            // TODO
-            return false;
-        }
-
-        if (auto node = &nodes[new_pos_hash]; node) {
-            node->isRemoved = false;
-            node->key = key;
-            node->value = value;
-        } else {
-            nodes[new_pos_hash] = new Node(key, value);
-            ++non_nullptr_size;
-        }
-        ++non_removed_size;
-
-        return true;
-    }
-
-    inline double load_factor() {
-        return static_cast<double>(non_removed_size) / static_cast<double>(size());
-    }
-
-    inline std::size_t size() {
-        return prime_numbers[size_i];
+        assert(true);
+        return false;
     }
 
     inline std::size_t next_size() {
-        prime_numbers[size_i + 1];
+        return prime_numbers[size_i + 1];
     }
 
     std::size_t size_i;
@@ -162,8 +204,7 @@ private:
     std::size_t non_removed_size;
 
     Node **nodes;
-    H hasher;
-
+    H <K> hash;
 };
 
-#endif // UNTITLED3_OPENADDRESSINGHASHTABLE_H
+#endif // UNTITLED3_DOUBLEHASHINGHASHTABLE_H
