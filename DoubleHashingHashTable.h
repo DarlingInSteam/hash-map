@@ -88,22 +88,12 @@ public:
     }
 
     void debug() {
-        std::cout << "double hashing hash table: [\n";
-
         for (int i = 0; i < size(); i++) {
-            std::cout << "  slot = ";
-            if (!nodes[i]) {
-                std::cout << "nullptr,\n";
-            } else {
-                std::cout << "{\n";
-                std::cout << "      is_removed: " << (nodes[i]->isRemoved ? "true" : "false") << ",\n";
-                std::cout << "      key: " << nodes[i]->key() << ",\n";
-                std::cout << "      value: " << nodes[i]->value() << ",\n";
-                std::cout << "  },\n";
+            if (nodes[i] && !nodes[i]->isRemoved) {
+                std::cout << nodes[i]->key() << " " << nodes[i]->value() << "\n";
             }
         }
-
-        std::cout << "]" << std::endl;
+        std::cout << std::endl;
     }
 
     double successful_probes_evaluation() {

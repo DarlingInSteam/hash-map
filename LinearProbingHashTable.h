@@ -105,6 +105,15 @@ public:
         return static_cast<double>(non_removed_size) / static_cast<double>(size());
     }
 
+    void debug() {
+        for (int i = 0; i < size(); i++) {
+            if (nodes[i] && !nodes[i]->isRemoved) {
+                std::cout << nodes[i]->key() << " " << nodes[i]->value() << "\n";
+            }
+        }
+        std::cout << std::endl;
+    }
+
     ~LinearHashingHashTable() {
         for (int i = 0; i < size(); i++) {
             delete nodes[i];

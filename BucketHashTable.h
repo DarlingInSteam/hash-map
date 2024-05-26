@@ -94,13 +94,18 @@ public:
         return prime_numbers[size_i];
     }
 
-//    double successful_probes_evaluation() {
-//        return 0;
-//    }
-//
-//    double failed_probes_evaluation() {
-//        return 0;
-//    }
+    void debug() {
+        for (int i = 0; i < size(); i++) {
+            Node *node = nodes[i];
+
+            while (node) {
+                std::cout << node->kv.first << " " << node->kv.second << "\n";
+                node = node->next;
+            }
+        }
+
+        std::cout << std::endl;
+    }
 
     ~BucketHashTable() {
         for (std::size_t i = 0; i < size(); ++i) {

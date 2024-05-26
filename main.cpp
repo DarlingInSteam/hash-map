@@ -7,7 +7,6 @@
 #include <unordered_set>
 #include <vector>
 #include <ranges>
-#include <unordered_map>
 #include <chrono>
 
 template<std::integral T>
@@ -23,6 +22,10 @@ consteval std::size_t bin_digits_amount(T number) {
     } while (temp > 0);
 
     return amount;
+}
+
+bool gen_random_bool() {
+    return rand() % 2 == 0;
 }
 
 std::size_t gen_random() {
@@ -54,12 +57,45 @@ struct StdHasher {
     }
 };
 
+template<>
+struct StdHasher<std::pair<std::size_t, bool>> {
+    std::size_t operator()(const std::pair<std::size_t, bool> &key) {
+        return std::hash<std::size_t>{}(key.first) ^ (std::hash<bool>{}(key.second) << 1);
+    }
+};
+
 std::ostream &bold_on(std::ostream &os) {
     return os << "\e[1m";
 }
 
 std::ostream &bold_off(std::ostream &os) {
     return os << "\e[0m";
+}
+
+template<template<typename, typename, template<typename> typename, double> typename H>
+void test_deletion(std::string_view title, const std::unordered_set<std::size_t> &random_numbers) {
+    H<std::size_t, std::size_t, StdHasher, 0.5> hash_table;
+
+    std::cout << bold_on << "test: " << bold_off << title << "\n";
+
+    for (auto number: random_numbers) {
+        std::cout << bold_on << "insert: " << bold_off << number << "\n";
+        hash_table.insert({number, number});
+    }
+
+    std::cout << bold_on << "\nload factor: " << bold_off << hash_table.load_factor() << "\n";
+    std::cout << bold_on << "hash table fullness: " << bold_off << hash_table.fullness() << "\n\n";
+
+    for (auto number: random_numbers) {
+        if (gen_random_bool()) {
+            std::cout << bold_on << "try to remove: " << bold_off << number << " ... ";
+            auto remove_result = hash_table.remove(number);
+            std::cout << (remove_result ? "successful" : "failed") << "\n";
+        }
+    }
+
+    std::cout << bold_on << "\nafter removes:\n" << bold_off;
+    hash_table.debug();
 }
 
 template<template<typename, typename, template<typename> typename, double> typename H, std::size_t min, double load_factor_limit, bool count_average_probes>
@@ -139,6 +175,7 @@ void test(std::string_view title, const std::unordered_set<std::size_t> &random_
     std::cout << bold_on << "total time of failed searches: " << bold_off << failed_duration.count() << "ms" << "\n";
     std::cout << bold_on << "average time of failed search: " << bold_off
               << failed_duration.count() / (1'000'000 - hash_table.fullness()) << "ms" << "\n\n";
+    std::cout << std::endl;
 }
 
 template<template<typename, typename, template<typename> typename, double> typename H, std::size_t min, bool count_average_probes>
@@ -155,11 +192,16 @@ void test_series(std::string_view title, std::unordered_set<std::size_t> random_
 }
 
 int main() {
-    auto random_numbers = generate_rand_numbers<1'000'000>(0, 1'000'000);
+//    auto random_numbers = generate_rand_numbers<1'000'000>(0, 1'000'000);
+    auto random_numbers = generate_rand_numbers<15>(0, 1'000'000);
 
-    test_series<DoubleHashingHashTable, 50'000, true>("double hashing hash table", random_numbers);
-    test_series<LinearHashingHashTable, 50'000, true>("linear hashing hash table", random_numbers);
-    test_series<BucketHashTable, 50'000, false>("bucket hash table", random_numbers);
+    test_deletion<DoubleHashingHashTable>("double hashing hash table", random_numbers);
+    test_deletion<LinearHashingHashTable>("linear probing hash table", random_numbers);
+    test_deletion<BucketHashTable>("bucket hash table", random_numbers);
+
+//    test_series<DoubleHashingHashTable, 50'000, true>("double hashing hash table", random_numbers);
+//    test_series<LinearHashingHashTable, 50'000, true>("linear probing hash table", random_numbers);
+//    test_series<BucketHashTable, 50'000, false>("bucket hash table", random_numbers);
 
     return 0;
 }
